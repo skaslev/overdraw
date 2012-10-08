@@ -1,0 +1,178 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      #canvas {
+        display: block;
+        position: relative;
+        top: 50px;
+        width: 1024px;
+        height: 576px;
+        background: black;
+      }
+      .centered {
+        margin-left: auto;
+        margin-right: auto;
+      }
+    </style>
+    <script id="pos-vs" type="x-shader/x-vertex">
+      attribute vec3 aPos;
+
+      void main(void) {
+        gl_Position = vec4(aPos, 1.0);
+      }
+    </script>
+    <script id="green-fs" type="x-shader/x-fragment">
+      precision mediump float;
+
+      void main(void) {
+        gl_FragColor = vec4(0.5, 1.0, 0.0, 1.0);
+      }
+    </script>
+    <script id="overdraw-fs" type="x-shader/x-fragment">
+      precision mediump float;
+
+      void main(void) {
+        gl_FragColor = vec4(1.0, 0.0, 0.0, 0.3);
+      }
+    </script>
+    <script>
+      (function() {
+        window.addEventListener('load', function() {
+          var canvas = document.getElementById('canvas');
+          canvas.width = canvas.clientWidth;
+          canvas.height = canvas.clientHeight;
+          var gl = canvas.getContext('experimental-webgl', {
+            antialias: true,
+            depth: true,
+            stencil: true
+          });
+          var programs = compilePrograms(gl);
+          var showOverdrawLevel = 9;
+          var numQuads = 30;
+          var quads = genQuads(gl, numQuads);
+          draw(gl, programs, quads, showOverdrawLevel);
+          document.addEventListener('keypress', function(event) {
+            if (event.which >= 48 && event.which < 58) {
+              showOverdrawLevel = event.which - 48;
+            } else {
+              quads = genQuads(gl, numQuads);
+            }
+            draw(gl, programs, quads, showOverdrawLevel);
+          });
+        });
+
+        function compilePrograms(gl) {
+          var programs = {};
+          programs.green = makeProgram(gl, 'pos-vs', 'green-fs');
+          programs.green.aPos = gl.getAttribLocation(programs.green, 'aPos');
+          programs.overdraw = makeProgram(gl, 'pos-vs', 'overdraw-fs');
+          programs.overdraw.aPos = gl.getAttribLocation(programs.overdraw, 'aPos');
+          return programs;
+        }
+
+        function compileShader(gl, shader, id) {
+          var src = document.getElementById(id).firstChild.data;
+          gl.shaderSource(shader, src);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.log(gl.getShaderInfoLog(shader));
+          }
+        }
+
+        function makeProgram(gl, vshaderId, fshaderId) {
+          var vshader = gl.createShader(gl.VERTEX_SHADER);
+          compileShader(gl, vshader, vshaderId);
+
+          var fshader = gl.createShader(gl.FRAGMENT_SHADER);
+          compileShader(gl, fshader, fshaderId);
+
+          var program = gl.createProgram();
+          gl.attachShader(program, vshader);
+          gl.attachShader(program, fshader);
+          gl.linkProgram(program);
+          if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.log("Could not link program");
+          }
+
+          return program;
+        }
+
+        function rescale(x, a, b, c, d) {
+          return c + (x - a) / (b - a) * (d - c);
+        }
+
+        function genQuads(gl, n) {
+          var quads = {};
+          var indices = new Uint16Array(6);
+          indices[0] = 0; indices[1] = 1; indices[2] = 2;
+          indices[3] = 2; indices[4] = 3; indices[5] = 0;
+          quads.elementBuf = gl.createBuffer();
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, quads.elementBuf);
+          gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+
+          quads.arrayBufs = [];
+          for (var i = 0; i < n; i++) {
+            var w = 0.25;
+            var h = w * gl.drawingBufferWidth / gl.drawingBufferHeight;
+            var x = rescale(Math.random(), 0, 1, -1, 1 - w);
+            var y = rescale(Math.random(), 0, 1, -1, 1 - h);
+            if (i == 0) {
+              x = y = -1;
+              w = h = 2;
+            }
+            var vertices = new Float32Array(4 * 3);
+            vertices[0] = x;     vertices[1] = y;      vertices[2] = 0.0;
+            vertices[3] = x + w; vertices[4] = y;      vertices[5] = 0.0;
+            vertices[6] = x + w; vertices[7] = y + h;  vertices[8] = 0.0;
+            vertices[9] = x;     vertices[10] = y + h; vertices[11] = 0.0;
+            var buf = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+            gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+            quads.arrayBufs.push(buf)
+          }
+          return quads;
+        }
+
+        function draw(gl, programs, quads, showOverdrawLevel) {
+          gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+          gl.clearColor(0.0, 0.0, 0.0, 1.0);
+          gl.stencilMask(0xFF);
+          gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+
+          gl.disable(gl.BLEND);
+          gl.enable(gl.STENCIL_TEST);
+          gl.stencilFunc(gl.ALWAYS, 0, 0xFF);
+          gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+
+          gl.useProgram(programs.green);
+          gl.enableVertexAttribArray(programs.green.aPos);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, quads.elementBuf);
+          for (var i = 1; i < quads.arrayBufs.length; i++) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, quads.arrayBufs[i]);
+            gl.vertexAttribPointer(programs.green.aPos, 3, gl.FLOAT, false, 0, 0);
+            gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+          }
+
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.stencilMask(0);
+          gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+
+          gl.useProgram(programs.overdraw);
+          gl.enableVertexAttribArray(programs.overdraw.aPos);
+          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, quads.elementBuf);
+          gl.bindBuffer(gl.ARRAY_BUFFER, quads.arrayBufs[0]);
+          gl.vertexAttribPointer(programs.overdraw.aPos, 3, gl.FLOAT, false, 0, 0);
+          for (var i = 2; i <= showOverdrawLevel; i++) {
+            gl.stencilFunc(gl.LEQUAL, i, 0xFF);
+            gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+          }
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <canvas id="canvas" class="centered"></canvas>
+  </body>
+</html>
